@@ -1,0 +1,19 @@
+{
+  "name": "parking-booking-system",
+  "version": "1.0.0",
+  "description": "Responsive parking booking system with payment integration",
+  "main": "server/index.js",
+  "scripts": {
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "server": "cd server && npm run dev",
+    "client": "cd client && npm start",
+    "build": "cd client && npm run build",
+    "install-all": "npm install && cd server && npm install && cd ../client && npm install"
+  },
+  "keywords": ["parking", "booking", "payment", "react", "nodejs"],
+  "author": "NexGen Innovators",
+  "license": "GPL-3.0-or-later",
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+} 

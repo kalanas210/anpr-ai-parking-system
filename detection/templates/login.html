@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - AI Parking System</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-image: url('https://miro.medium.com/v2/resize:fit:1400/1*X7TefCHOyE06QpSHJuyEiw.jpeg');
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            background-attachment: fixed;
+        }
+    </style>
+</head>
+<body class="min-h-screen">
+    <div class="min-h-screen flex flex-col justify-center py-12 sm:px-6 lg:px-8 bg-black bg-opacity-50">
+        <div class="sm:mx-auto sm:w-full sm:max-w-md">
+            <div class="bg-gray-50 shadow-lg rounded-t-lg px-6 py-8">
+                <img src="https://upload.wikimedia.org/wikipedia/en/thumb/6/60/University_of_Moratuwa_logo.png/220px-University_of_Moratuwa_logo.png" alt="University of Moratuwa Logo" class="mx-auto h-20 w-auto">
+                <h2 class="mt-6 text-center text-3xl font-extrabold text-gray-900">
+                    AI Parking System
+                </h2>
+                <p class="mt-2 text-center text-sm text-gray-600">
+                    University of Moratuwa, Sri Lanka
+                </p>
+            </div>
+        </div>
+
+        <div class="sm:mx-auto sm:w-full sm:max-w-md">
+            <div class="bg-white py-8 px-4 shadow-lg sm:rounded-b-lg sm:px-10">
+                <form class="space-y-6" id="loginForm" onsubmit="return handleLogin(event)">
+                    <div>
+                        <label for="email" class="block text-sm font-medium text-gray-700">
+                            Email address
+                        </label>
+                        <div class="mt-1 relative rounded-md shadow-sm">
+                            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                <i class="fas fa-envelope text-gray-400"></i>
+                            </div>
+                            <input type="email" id="email" name="email" required
+                                class="block w-full pl-10 sm:text-sm border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 p-2 border"
+                                placeholder="Enter your email">
+                        </div>
+                    </div>
+
+                    <div>
+                        <label for="password" class="block text-sm font-medium text-gray-700">
+                            Password
+                        </label>
+                        <div class="mt-1 relative rounded-md shadow-sm">
+                            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                <i class="fas fa-lock text-gray-400"></i>
+                            </div>
+                            <input type="password" id="password" name="password" required
+                                class="block w-full pl-10 sm:text-sm border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 p-2 border"
+                                placeholder="Enter your password">
+                            <div class="absolute inset-y-0 right-0 pr-3 flex items-center">
+                                <button type="button" onclick="togglePassword()" class="text-gray-400 hover:text-gray-500 focus:outline-none">
+                                    <i class="fas fa-eye" id="toggleIcon"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center">
+                            <input type="checkbox" id="remember-me" name="remember-me"
+                                class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded">
+                            <label for="remember-me" class="ml-2 block text-sm text-gray-900">
+                                Remember me
+                            </label>
+                        </div>
+
+                        <div class="text-sm">
+                            <a href="#" class="font-medium text-blue-600 hover:text-blue-500">
+                                Forgot your password?
+                            </a>
+                        </div>
+                    </div>
+
+                    <div>
+                        <button type="submit"
+                            class="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                            <span class="mr-2">Sign in</span>
+                            <i class="fas fa-sign-in-alt" style="margin-top: 5px;"></i>
+                        </button>
+                    </div>
+
+                    <!-- Error Alert (hidden by default) -->
+                    <div id="errorAlert" class="rounded-md bg-red-50 p-4 hidden">
+                        <div class="flex">
+                            <div class="flex-shrink-0">
+                                <i class="fas fa-exclamation-circle text-red-400"></i>
+                            </div>
+                            <div class="ml-3">
+                                <h3 class="text-sm font-medium text-red-800" id="errorMessage">
+                                    Invalid credentials
+                                </h3>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function togglePassword() {
+            const passwordInput = document.getElementById('password');
+            const toggleIcon = document.getElementById('toggleIcon');
+            
+            if (passwordInput.type === 'password') {
+                passwordInput.type = 'text';
+                toggleIcon.classList.remove('fa-eye');
+                toggleIcon.classList.add('fa-eye-slash');
+            } else {
+                passwordInput.type = 'password';
+                toggleIcon.classList.remove('fa-eye-slash');
+                toggleIcon.classList.add('fa-eye');
+            }
+        }
+
+        function showError(message) {
+            const errorAlert = document.getElementById('errorAlert');
+            const errorMessage = document.getElementById('errorMessage');
+            errorMessage.textContent = message;
+            errorAlert.classList.remove('hidden');
+            
+            setTimeout(() => {
+                errorAlert.classList.add('hidden');
+            }, 5000);
+        }
+
+        function handleLogin(event) {
+            event.preventDefault();
+            
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            const remember = document.getElementById('remember-me').checked;
+
+            // Simple validation - you can modify this
+            if (email === 'admin@uom.lk' && password === 'admin') {
+                // Store login status
+                if (remember) {
+                    localStorage.setItem('isLoggedIn', 'true');
+                } else {
+                    sessionStorage.setItem('isLoggedIn', 'true');
+                }
+                
+                // Redirect to dashboard
+                window.location.href = '/dashboard';
+            } else {
+                showError('Invalid email or password. Use admin@uom.lk / admin');
+            }
+
+            return false;
+        }
+    </script>
+</body>
+</html> 

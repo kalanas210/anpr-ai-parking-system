@@ -1,0 +1,1018 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Smart Parking System - University of Moratuwa</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <style>
+        .parking-slot {
+            transition: all 0.3s ease;
+            min-height: 400px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+        .parking-slot.occupied {
+            border-color: #ef4444;
+            background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+        }
+        .parking-slot.free {
+            border-color: #10b981;
+            background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+        }
+        .parking-slot.detecting {
+            border-color: #f59e0b;
+            background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+        }
+        .video-container {
+            background: #000;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+        }
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+            animation: pulse 2s infinite;
+        }
+        .status-active {
+            background-color: #10b981;
+            box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+        }
+        .status-inactive {
+            background-color: #ef4444;
+            box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.2);
+        }
+        .ocr-badge {
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .ocr-easyocr {
+            background-color: #dbeafe;
+            color: #1d4ed8;
+        }
+        .ocr-openai {
+            background-color: #fef3c7;
+            color: #d97706;
+        }
+        .vehicle-image {
+            max-height: 200px;
+            object-fit: cover;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            backdrop-filter: blur(4px);
+        }
+        .modal-content {
+            background: white;
+            border-radius: 12px;
+            max-width: 90vw;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+        }
+        .university-gradient {
+            background: linear-gradient(135deg, #1e40af 0%, #3b82f6 50%, #60a5fa 100%);
+        }
+        .card-hover {
+            transition: all 0.3s ease;
+        }
+        .card-hover:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .nav-link {
+            position: relative;
+            transition: all 0.3s ease;
+        }
+        .nav-link::after {
+            content: '';
+            position: absolute;
+            bottom: -2px;
+            left: 0;
+            width: 0;
+            height: 2px;
+            background: #60a5fa;
+            transition: width 0.3s ease;
+        }
+        .nav-link.active::after {
+            width: 100%;
+        }
+        .navbar-custom {
+            background-color: #7B0D0D !important;
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // Utility functions
+        const formatDuration = (durationStr) => {
+            if (!durationStr) return 'N/A';
+            try {
+                const duration = durationStr.replace('0 days, ', '');
+                return duration;
+            } catch (error) {
+                return 'N/A';
+            }
+        };
+
+        const formatDateTime = (dateStr) => {
+            if (!dateStr) return 'N/A';
+            try {
+                return new Date(dateStr).toLocaleString();
+            } catch (error) {
+                return 'N/A';
+            }
+        };
+
+        const getStatusText = (status) => {
+            if (!status.occupied) return 'Free';
+            if (status.license_plate === 'Unknown' || status.license_plate === 'UNREADABLE') return 'Detecting...';
+            return 'Occupied';
+        };
+
+        const getStatusColor = (status) => {
+            if (!status.occupied) return 'bg-green-100 text-green-800';
+            if (status.license_plate === 'Unknown' || status.license_plate === 'UNREADABLE') return 'bg-yellow-100 text-yellow-800';
+            return 'bg-red-100 text-red-800';
+        };
+
+        // Error Boundary Component
+        function ErrorBoundary({ children }) {
+            const [hasError, setHasError] = useState(false);
+            const [error, setError] = useState(null);
+
+            if (hasError) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+                        <div className="text-center">
+                            <h2 className="text-2xl font-bold text-red-600 mb-4">Something went wrong</h2>
+                            <p className="text-gray-600 mb-4">{error?.message || 'An error occurred'}</p>
+                            <button
+                                onClick={() => window.location.reload()}
+                                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                            >
+                                Reload Page
+                            </button>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div onError={(error) => {
+                    setHasError(true);
+                    setError(error);
+                }}>
+                    {children}
+                </div>
+            );
+        }
+
+        function App() {
+            const [parkingStatus, setParkingStatus] = useState({});
+            const [isDetectionRunning, setIsDetectionRunning] = useState(false);
+            const [currentOcrMethod, setCurrentOcrMethod] = useState('EasyOCR');
+            const [statistics, setStatistics] = useState({});
+            const [parkingRecords, setParkingRecords] = useState([]);
+            const [unknownVehicles, setUnknownVehicles] = useState([]);
+            const [activeTab, setActiveTab] = useState('dashboard');
+            const [isLoading, setIsLoading] = useState(true);
+            const [error, setError] = useState(null);
+            const [selectedVehicle, setSelectedVehicle] = useState(null);
+            const [showVehicleModal, setShowVehicleModal] = useState(false);
+            const [selectedDate, setSelectedDate] = useState(new Date());
+            const socketRef = useRef(null);
+
+            // Fix: Define onSwitchOcr function
+            const onSwitchOcr = async () => {
+                const newMethod = currentOcrMethod === 'EasyOCR' ? 'OpenAI' : 'EasyOCR';
+                try {
+                    await fetch('/api/switch-ocr', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ method: newMethod })
+                    });
+                    setCurrentOcrMethod(newMethod);
+                } catch (e) {
+                    alert('Failed to switch OCR method.');
+                }
+            };
+
+            const loadInitialData = async () => {
+                try {
+                    setError(null);
+                    const [statusRes, ocrRes, statsRes, recordsRes, unknownRes] = await Promise.all([
+                        fetch('/api/parking-status'),
+                        fetch('/api/current-ocr'),
+                        fetch('/api/statistics'),
+                        fetch('/api/parking-records'),
+                        fetch('/api/unknown-vehicles')
+                    ]);
+
+                    const [statusData, ocrData, statsData, recordsData, unknownData] = await Promise.all([
+                        statusRes.json(),
+                        ocrRes.json(),
+                        statsRes.json(),
+                        recordsRes.json(),
+                        unknownRes.json()
+                    ]);
+
+                    setParkingStatus(statusData || {});
+                    setCurrentOcrMethod(ocrData?.method || 'EasyOCR');
+                    setStatistics(statsData || {});
+                    setParkingRecords(recordsData || []);
+                    setUnknownVehicles(unknownData || []);
+                    setIsLoading(false);
+                } catch (error) {
+                    console.error('Error loading initial data:', error);
+                    setError('Failed to load data');
+                    setIsLoading(false);
+                }
+            };
+
+            const startDetection = async () => {
+                try {
+                    const response = await fetch('/api/start-detection', { method: 'POST' });
+                    const data = await response.json();
+                    if (data.status === 'success') {
+                        setIsDetectionRunning(true);
+                    }
+                } catch (error) {
+                    console.error('Error starting detection:', error);
+                }
+            };
+
+            const stopDetection = async () => {
+                try {
+                    const response = await fetch('/api/stop-detection', { method: 'POST' });
+                    const data = await response.json();
+                    if (data.status === 'success') {
+                        setIsDetectionRunning(false);
+                    }
+                } catch (error) {
+                    console.error('Error stopping detection:', error);
+                }
+            };
+
+            const switchOcrMethod = async (method) => {
+                try {
+                    const response = await fetch('/api/switch-ocr', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ method })
+                    });
+                    const data = await response.json();
+                    if (data.status === 'success') {
+                        setCurrentOcrMethod(method);
+                    }
+                } catch (error) {
+                    console.error('Error switching OCR method:', error);
+                }
+            };
+
+            const refreshData = () => {
+                loadInitialData();
+            };
+
+            const openVehicleModal = (vehicle) => {
+                setSelectedVehicle(vehicle);
+                setShowVehicleModal(true);
+            };
+
+            const closeVehicleModal = () => {
+                setShowVehicleModal(false);
+                setSelectedVehicle(null);
+            };
+
+            const loadRecordsByDate = async (date) => {
+                try {
+                    const response = await fetch(`/api/parking-records?date=${date.toISOString()}`);
+                    const data = await response.json();
+                    setParkingRecords(data || []);
+                } catch (error) {
+                    console.error('Error loading records by date:', error);
+                }
+            };
+
+            useEffect(() => {
+                loadInitialData();
+
+                // Initialize Socket.IO
+                socketRef.current = io();
+                socketRef.current.on('parking_status_update', (data) => {
+                    // Compare previous and new status to detect slot freed
+                    const prevStatus = parkingStatus;
+                    setParkingStatus(data);
+
+                    // Check if any slot changed from occupied to free
+                    Object.keys(data).forEach(slotId => {
+                        if (
+                            prevStatus[slotId]?.occupied &&
+                            !data[slotId]?.occupied
+                        ) {
+                            // Slot was just freed, refresh records
+                            loadRecordsByDate(selectedDate);
+                        }
+                    });
+                });
+
+                return () => {
+                    if (socketRef.current) {
+                        socketRef.current.disconnect();
+                    }
+                };
+            }, []);
+
+            useEffect(() => {
+                loadRecordsByDate(selectedDate);
+            }, [selectedDate]);
+
+            if (isLoading) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+                        <div className="text-center">
+                            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+                            <p className="text-gray-600">Loading AI Parking System...</p>
+                        </div>
+                    </div>
+                );
+            }
+
+            if (error) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+                        <div className="text-center">
+                            <h2 className="text-2xl font-bold text-red-600 mb-4">Error</h2>
+                            <p className="text-gray-600 mb-4">{error}</p>
+                            <button
+                                onClick={loadInitialData}
+                                className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                            >
+                                Retry
+                            </button>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <ErrorBoundary>
+                    <div className="min-h-screen bg-gray-50">
+                        {/* Professional Navigation */}
+                        <nav className="navbar-custom w-full shadow-md z-50">
+                            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between py-3">
+                                <div className="flex items-center space-x-3">
+                                    {/* Logo and branding removed */}
+                                </div>
+                                <div className="flex flex-col sm:flex-row items-center space-y-2 sm:space-y-0 sm:space-x-6 mt-3 sm:mt-0">
+                                    <button className={`nav-link px-3 py-2 rounded-md text-sm font-medium focus:outline-none ${activeTab === 'dashboard' ? 'bg-white text-[#7B0D0D]' : 'text-white hover:bg-[#a32d2d] hover:text-white'}`} onClick={() => setActiveTab('dashboard')}>
+                                        <i className="fa fa-tachometer-alt mr-1"></i> Dashboard
+                                    </button>
+                                    <button className={`nav-link px-3 py-2 rounded-md text-sm font-medium focus:outline-none ${activeTab === 'records' ? 'bg-white text-[#7B0D0D]' : 'text-white hover:bg-[#a32d2d] hover:text-white'}`} onClick={() => setActiveTab('records')}>
+                                        <i className="fa fa-history mr-1"></i> Parking Records
+                                    </button>
+                                    <button className={`nav-link px-3 py-2 rounded-md text-sm font-medium focus:outline-none ${activeTab === 'unknown' ? 'bg-white text-[#7B0D0D]' : 'text-white hover:bg-[#a32d2d] hover:text-white'}`} onClick={() => setActiveTab('unknown')}>
+                                        <i className="fa fa-question-circle mr-1"></i> Unknown Vehicles
+                                    </button>
+                                    <button className={`nav-link px-3 py-2 rounded-md text-sm font-medium focus:outline-none ${activeTab === 'settings' ? 'bg-white text-[#7B0D0D]' : 'text-white hover:bg-[#a32d2d] hover:text-white'}`} onClick={() => setActiveTab('settings')}>
+                                        <i className="fa fa-cog mr-1"></i> Settings
+                                    </button>
+                                </div>
+                                <div className="flex items-center space-x-3 mt-3 sm:mt-0">
+                                    <span className={`status-indicator ${isDetectionRunning ? 'status-active' : 'status-inactive'}`}></span>
+                                    <span className="text-white text-sm mr-2">{isDetectionRunning ? 'Detection Active' : 'Detection Inactive'}</span>
+                                    <span className={`ocr-badge ${currentOcrMethod === 'EasyOCR' ? 'ocr-easyocr' : 'ocr-openai'} cursor-pointer`} onClick={onSwitchOcr} title="Switch OCR Method">{currentOcrMethod}</span>
+                                </div>
+                            </div>
+                        </nav>
+
+                        {/* Main Content */}
+                        <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
+                            {activeTab === 'dashboard' && (
+                                <Dashboard
+                                    parkingStatus={parkingStatus}
+                                    statistics={statistics}
+                                    isDetectionRunning={isDetectionRunning}
+                                    onStartDetection={startDetection}
+                                    onStopDetection={stopDetection}
+                                    onRefresh={refreshData}
+                                />
+                            )}
+                            {activeTab === 'records' && (
+                                <ParkingRecords 
+                                    records={parkingRecords} 
+                                    onVehicleClick={openVehicleModal}
+                                    selectedDate={selectedDate}
+                                    onDateChange={setSelectedDate}
+                                />
+                            )}
+                            {activeTab === 'unknown' && (
+                                <UnknownVehicles 
+                                    vehicles={unknownVehicles} 
+                                    onVehicleClick={openVehicleModal}
+                                />
+                            )}
+                            {activeTab === 'settings' && (
+                                <Settings
+                                    currentOcrMethod={currentOcrMethod}
+                                    onSwitchOcr={switchOcrMethod}
+                                    isDetectionRunning={isDetectionRunning}
+                                    onStartDetection={startDetection}
+                                    onStopDetection={stopDetection}
+                                />
+                            )}
+                        </main>
+
+                        {/* Professional Footer */}
+                        <Footer />
+
+                        {/* Vehicle Details Modal */}
+                        {showVehicleModal && selectedVehicle && (
+                            <VehicleModal
+                                vehicle={selectedVehicle}
+                                onClose={closeVehicleModal}
+                            />
+                        )}
+                    </div>
+                </ErrorBoundary>
+            );
+        }
+
+        function Dashboard({ parkingStatus, statistics, isDetectionRunning, onStartDetection, onStopDetection, onRefresh }) {
+            const safeParkingStatus = parkingStatus || {};
+            const safeStatistics = statistics || {};
+            
+            // Calculate real-time statistics
+            const occupiedSlots = Object.values(safeParkingStatus).filter(status => status?.occupied).length;
+            const totalSlots = Object.keys(safeParkingStatus).length;
+            const freeSlots = totalSlots - occupiedSlots;
+            const detectingSlots = Object.values(safeParkingStatus).filter(status => 
+                status?.occupied && (status?.license_plate === 'Unknown' || status?.license_plate === 'UNREADABLE')
+            ).length;
+
+            return (
+                <div className="space-y-6">
+                    {/* Enhanced Statistics Cards */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                        <div className="bg-white overflow-hidden shadow-lg rounded-xl card-hover">
+                            <div className="p-6">
+                                <div className="flex items-center">
+                                    <div className="flex-shrink-0">
+                                        <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
+                                            <i className="fas fa-calendar-day text-2xl text-blue-600"></i>
+                                        </div>
+                                    </div>
+                                    <div className="ml-5 w-0 flex-1">
+                                        <dl>
+                                            <dt className="text-sm font-medium text-gray-500 truncate">Today's Records</dt>
+                                            <dd className="text-2xl font-bold text-gray-900">{safeStatistics.today_records || 0}</dd>
+                                        </dl>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="bg-white overflow-hidden shadow-lg rounded-xl card-hover">
+                            <div className="p-6">
+                                <div className="flex items-center">
+                                    <div className="flex-shrink-0">
+                                        <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center">
+                                            <i className="fas fa-parking text-2xl text-green-600"></i>
+                                        </div>
+                                    </div>
+                                    <div className="ml-5 w-0 flex-1">
+                                        <dl>
+                                            <dt className="text-sm font-medium text-gray-500 truncate">Currently Occupied</dt>
+                                            <dd className="text-2xl font-bold text-gray-900">{occupiedSlots}</dd>
+                                        </dl>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="bg-white overflow-hidden shadow-lg rounded-xl card-hover">
+                            <div className="p-6">
+                                <div className="flex items-center">
+                                    <div className="flex-shrink-0">
+                                        <div className="w-12 h-12 bg-yellow-100 rounded-lg flex items-center justify-center">
+                                            <i className="fas fa-search text-2xl text-yellow-600"></i>
+                                        </div>
+                                    </div>
+                                    <div className="ml-5 w-0 flex-1">
+                                        <dl>
+                                            <dt className="text-sm font-medium text-gray-500 truncate">Detecting</dt>
+                                            <dd className="text-2xl font-bold text-gray-900">{detectingSlots}</dd>
+                                        </dl>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="bg-white overflow-hidden shadow-lg rounded-xl card-hover">
+                            <div className="p-6">
+                                <div className="flex items-center">
+                                    <div className="flex-shrink-0">
+                                        <div className="w-12 h-12 bg-gray-100 rounded-lg flex items-center justify-center">
+                                            <i className="fas fa-parking text-2xl text-gray-600"></i>
+                                        </div>
+                                    </div>
+                                    <div className="ml-5 w-0 flex-1">
+                                        <dl>
+                                            <dt className="text-sm font-medium text-gray-500 truncate">Available Slots</dt>
+                                            <dd className="text-2xl font-bold text-gray-900">{freeSlots}</dd>
+                                        </dl>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Enhanced Control Panel */}
+                    <div className="bg-white shadow-lg rounded-xl">
+                        <div className="px-6 py-6">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <h3 className="text-xl font-bold text-gray-900">System Control</h3>
+                                    <p className="mt-1 text-sm text-gray-500">Start or stop vehicle detection</p>
+                                </div>
+                                <div className="flex space-x-3">
+                                    <button
+                                        onClick={onRefresh}
+                                        className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+                                    >
+                                        <i className="fas fa-sync-alt mr-2"></i>
+                                        Refresh
+                                    </button>
+                                    <button
+                                        onClick={onStartDetection}
+                                        disabled={isDetectionRunning}
+                                        className={`px-4 py-2 rounded-lg text-white transition-colors ${
+                                            isDetectionRunning
+                                                ? 'bg-gray-300 cursor-not-allowed'
+                                                : 'bg-green-600 hover:bg-green-700'
+                                        }`}
+                                    >
+                                        <i className="fas fa-play mr-2"></i>
+                                        Start Detection
+                                    </button>
+                                    <button
+                                        onClick={onStopDetection}
+                                        disabled={!isDetectionRunning}
+                                        className={`px-4 py-2 rounded-lg text-white transition-colors ${
+                                            !isDetectionRunning
+                                                ? 'bg-gray-300 cursor-not-allowed'
+                                                : 'bg-red-600 hover:bg-red-700'
+                                        }`}
+                                    >
+                                        <i className="fas fa-stop mr-2"></i>
+                                        Stop Detection
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Enhanced Parking Slots */}
+                    <div className="bg-white shadow-lg rounded-xl">
+                        <div className="px-6 py-6">
+                            <h3 className="text-xl font-bold text-gray-900 mb-6">Parking Slots Status</h3>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                {Object.entries(safeParkingStatus).map(([slotId, status]) => {
+                                    const safeStatus = status || {};
+                                    const statusText = getStatusText(safeStatus);
+                                    const statusColor = getStatusColor(safeStatus);
+                                    const isDetecting = safeStatus.occupied && (safeStatus.license_plate === 'Unknown' || safeStatus.license_plate === 'UNREADABLE');
+                                    
+                                    return (
+                                        <div
+                                            key={slotId}
+                                            className={`parking-slot border-2 p-6 ${
+                                                safeStatus.occupied 
+                                                    ? isDetecting ? 'detecting' : 'occupied' 
+                                                    : 'free'
+                                            }`}
+                                        >
+                                            <div className="flex items-center justify-between mb-4">
+                                                <h4 className="text-lg font-semibold">Slot {slotId}</h4>
+                                                <span className={`px-3 py-1 rounded-full text-xs font-medium ${statusColor}`}>
+                                                    {statusText}
+                                                </span>
+                                            </div>
+
+                                            {safeStatus.occupied ? (
+                                                <div className="space-y-3">
+                                                    {safeStatus.vehicle_image && (
+                                                        <div className="text-center">
+                                                            <img
+                                                                src={`data:image/jpeg;base64,${safeStatus.vehicle_image}`}
+                                                                alt="Vehicle"
+                                                                className="vehicle-image w-full rounded-lg"
+                                                                onError={(e) => {
+                                                                    e.target.style.display = 'none';
+                                                                }}
+                                                            />
+                                                        </div>
+                                                    )}
+                                                    <div className="space-y-2">
+                                                        <div>
+                                                            <span className="text-sm font-medium text-gray-500">Vehicle Type:</span>
+                                                            <p className="text-sm font-semibold text-blue-600">
+                                                                {safeStatus.vehicle_type || 'Unknown'}
+                                                            </p>
+                                                        </div>
+                                                        <div>
+                                                            <span className="text-sm font-medium text-gray-500">License Plate:</span>
+                                                            <p className="text-lg font-semibold">
+                                                                {isDetecting ? (
+                                                                    <span className="text-yellow-600">
+                                                                        <i className="fas fa-spinner fa-spin mr-2"></i>
+                                                                        Detecting...
+                                                                    </span>
+                                                                ) : (
+                                                                    safeStatus.license_plate || 'Unknown'
+                                                                )}
+                                                            </p>
+                                                        </div>
+                                                        <div>
+                                                            <span className="text-sm font-medium text-gray-500">Entry Time:</span>
+                                                            <p className="text-sm">
+                                                                {formatDateTime(safeStatus.entry_time)}
+                                                            </p>
+                                                        </div>
+                                                        <div>
+                                                            <span className="text-sm font-medium text-gray-500">Duration:</span>
+                                                            <p className="text-sm">
+                                                                {formatDuration(safeStatus.parking_duration)}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <div className="text-center py-8">
+                                                    <i className="fas fa-parking text-4xl text-green-500 mb-2"></i>
+                                                    <p className="text-gray-500">Slot Available</p>
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        function ParkingRecords({ records, onVehicleClick, selectedDate, onDateChange }) {
+            const datePickerRef = useRef(null);
+
+            useEffect(() => {
+                if (datePickerRef.current) {
+                    flatpickr(datePickerRef.current, {
+                        dateFormat: "Y-m-d",
+                        defaultDate: selectedDate,
+                        onChange: (selectedDates) => {
+                            if (selectedDates[0]) {
+                                onDateChange(selectedDates[0]);
+                            }
+                        }
+                    });
+                }
+            }, [selectedDate, onDateChange]);
+
+            return (
+                <div className="bg-white shadow-lg rounded-xl">
+                    <div className="px-6 py-6">
+                        <div className="flex items-center justify-between mb-6">
+                            <h3 className="text-xl font-bold text-gray-900">Parking Records</h3>
+                            <div className="flex items-center space-x-3">
+                                <label className="text-sm font-medium text-gray-700">Select Date:</label>
+                                <input
+                                    ref={datePickerRef}
+                                    type="text"
+                                    className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                    placeholder="Select date..."
+                                />
+                            </div>
+                        </div>
+                        <div className="overflow-x-auto">
+                            <table className="min-w-full divide-y divide-gray-200">
+                                <thead className="bg-gray-50">
+                                    <tr>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Slot</th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Vehicle Type</th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">License Plate</th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Entry Time</th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Exit Time</th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Duration</th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">OCR Method</th>
+                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="bg-white divide-y divide-gray-200">
+                                    {records.map((record, index) => (
+                                        <tr key={index} className="hover:bg-gray-50 cursor-pointer transition-colors" onClick={() => onVehicleClick(record)}>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                                                Slot {record.slot_id}
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                                <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded-full text-xs font-medium">
+                                                    {record.vehicle_type || 'Unknown'}
+                                                </span>
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                                {record.license_plate}
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                {formatDateTime(record.entry_time)}
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                {formatDateTime(record.exit_time)}
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                {formatDuration(record.duration)}
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap">
+                                                <span className={`ocr-badge ${record.ocr_method === 'EasyOCR' ? 'ocr-easyocr' : 'ocr-openai'}`}>
+                                                    {record.ocr_method}
+                                                </span>
+                                            </td>
+                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                <span className="text-blue-600 hover:text-blue-800">
+                                                    <i className="fas fa-eye mr-1"></i>
+                                                    View Details
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        function UnknownVehicles({ vehicles, onVehicleClick }) {
+            return (
+                <div className="bg-white shadow-lg rounded-xl">
+                    <div className="px-6 py-6">
+                        <h3 className="text-xl font-bold text-gray-900 mb-6">Unknown Vehicles</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            {vehicles.map((vehicle, index) => (
+                                <div 
+                                    key={index} 
+                                    className="border rounded-xl p-4 cursor-pointer hover:shadow-lg transition-all card-hover"
+                                    onClick={() => onVehicleClick(vehicle)}
+                                >
+                                    {vehicle.vehicle_image && (
+                                        <img
+                                            src={`data:image/jpeg;base64,${vehicle.vehicle_image}`}
+                                            alt="Unknown Vehicle"
+                                            className="w-full h-48 object-cover rounded-lg mb-3"
+                                        />
+                                    )}
+                                    <div className="space-y-2">
+                                        <div>
+                                            <span className="text-sm font-medium text-gray-500">Slot:</span>
+                                            <p className="text-sm">Slot {vehicle.slot_id}</p>
+                                        </div>
+                                        <div>
+                                            <span className="text-sm font-medium text-gray-500">Detection Time:</span>
+                                            <p className="text-sm">{formatDateTime(vehicle.detection_time)}</p>
+                                        </div>
+                                        <div>
+                                            <span className="text-sm font-medium text-gray-500">OCR Method:</span>
+                                            <span className={`ocr-badge ${vehicle.ocr_method === 'EasyOCR' ? 'ocr-easyocr' : 'ocr-openai'}`}>
+                                                {vehicle.ocr_method}
+                                            </span>
+                                        </div>
+                                        <div className="pt-2">
+                                            <span className="text-xs text-blue-600 hover:text-blue-800">
+                                                Click to view details →
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        function VehicleModal({ vehicle, onClose }) {
+            return (
+                <div className="modal-overlay" onClick={onClose}>
+                    <div className="modal-content p-6" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex justify-between items-center mb-4">
+                            <h2 className="text-xl font-bold text-gray-900">Vehicle Details</h2>
+                            <button
+                                onClick={onClose}
+                                className="text-gray-400 hover:text-gray-600 transition-colors"
+                            >
+                                <i className="fas fa-times text-xl"></i>
+                            </button>
+                        </div>
+                        
+                        <div className="space-y-4">
+                            {vehicle.vehicle_image && (
+                                <div className="text-center">
+                                    <img
+                                        src={`data:image/jpeg;base64,${vehicle.vehicle_image}`}
+                                        alt="Vehicle"
+                                        className="max-w-full max-h-96 object-contain rounded-lg"
+                                    />
+                                </div>
+                            )}
+                            
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <span className="text-sm font-medium text-gray-500">Vehicle Type:</span>
+                                    <p className="text-sm font-semibold text-blue-600">
+                                        {vehicle.vehicle_type || 'Unknown'}
+                                    </p>
+                                </div>
+                                <div>
+                                    <span className="text-sm font-medium text-gray-500">Slot:</span>
+                                    <p className="text-sm">Slot {vehicle.slot_id}</p>
+                                </div>
+                                <div>
+                                    <span className="text-sm font-medium text-gray-500">License Plate:</span>
+                                    <p className="text-sm font-semibold">{vehicle.license_plate || 'Unknown'}</p>
+                                </div>
+                                <div>
+                                    <span className="text-sm font-medium text-gray-500">OCR Method:</span>
+                                    <span className={`ocr-badge ${vehicle.ocr_method === 'EasyOCR' ? 'ocr-easyocr' : 'ocr-openai'}`}>
+                                        {vehicle.ocr_method}
+                                    </span>
+                                </div>
+                                <div>
+                                    <span className="text-sm font-medium text-gray-500">Entry Time:</span>
+                                    <p className="text-sm">{formatDateTime(vehicle.entry_time)}</p>
+                                </div>
+                                <div>
+                                    <span className="text-sm font-medium text-gray-500">Exit Time:</span>
+                                    <p className="text-sm">{formatDateTime(vehicle.exit_time)}</p>
+                                </div>
+                                <div>
+                                    <span className="text-sm font-medium text-gray-500">Duration:</span>
+                                    <p className="text-sm">{formatDuration(vehicle.duration)}</p>
+                                </div>
+                            </div>
+                            
+                            {vehicle.detection_time && (
+                                <div className="pt-4 border-t">
+                                    <p className="text-sm text-gray-600">
+                                        This vehicle was detected but the license plate could not be read. 
+                                        The image has been saved for manual review.
+                                    </p>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        function Settings({ currentOcrMethod, onSwitchOcr, isDetectionRunning, onStartDetection, onStopDetection }) {
+            return (
+                <div className="space-y-6">
+                    <div className="bg-white shadow-lg rounded-xl">
+                        <div className="px-6 py-6">
+                            <h3 className="text-xl font-bold text-gray-900 mb-6">System Settings</h3>
+                            <div className="space-y-8">
+                                <div>
+                                    <h4 className="text-lg font-medium text-gray-700 mb-4">OCR Method Selection</h4>
+                                    <div className="flex space-x-4">
+                                        <button
+                                            onClick={() => onSwitchOcr('EasyOCR')}
+                                            className={`px-6 py-3 rounded-lg text-sm font-medium transition-all ${
+                                                currentOcrMethod === 'EasyOCR'
+                                                    ? 'bg-blue-600 text-white shadow-lg'
+                                                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                                            }`}
+                                        >
+                                            <i className="fas fa-eye mr-2"></i>
+                                            EasyOCR
+                                        </button>
+                                        <button
+                                            onClick={() => onSwitchOcr('OpenAI')}
+                                            className={`px-6 py-3 rounded-lg text-sm font-medium transition-all ${
+                                                currentOcrMethod === 'OpenAI'
+                                                    ? 'bg-blue-600 text-white shadow-lg'
+                                                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                                            }`}
+                                        >
+                                            <i className="fas fa-robot mr-2"></i>
+                                            OpenAI
+                                        </button>
+                                    </div>
+                                    <p className="mt-3 text-sm text-gray-500">
+                                        Current method: <span className="font-medium text-blue-600">{currentOcrMethod}</span>
+                                    </p>
+                                </div>
+
+                                <div>
+                                    <h4 className="text-lg font-medium text-gray-700 mb-4">Detection Control</h4>
+                                    <div className="flex space-x-4">
+                                        <button
+                                            onClick={onStartDetection}
+                                            disabled={isDetectionRunning}
+                                            className={`px-6 py-3 rounded-lg text-sm font-medium transition-all ${
+                                                isDetectionRunning
+                                                    ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                                                    : 'bg-green-600 text-white hover:bg-green-700 shadow-lg'
+                                            }`}
+                                        >
+                                            <i className="fas fa-play mr-2"></i>
+                                            Start Detection
+                                        </button>
+                                        <button
+                                            onClick={onStopDetection}
+                                            disabled={!isDetectionRunning}
+                                            className={`px-6 py-3 rounded-lg text-sm font-medium transition-all ${
+                                                !isDetectionRunning
+                                                    ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                                                    : 'bg-red-600 text-white hover:bg-red-700 shadow-lg'
+                                            }`}
+                                        >
+                                            <i className="fas fa-stop mr-2"></i>
+                                            Stop Detection
+                                        </button>
+                                    </div>
+                                    <p className="mt-3 text-sm text-gray-500">
+                                        Status: <span className={`font-medium ${isDetectionRunning ? 'text-green-600' : 'text-red-600'}`}>
+                                            {isDetectionRunning ? 'Active' : 'Inactive'}
+                                        </span>
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        function Footer() {
+            return (
+                <footer className="w-full bg-[#232f3e] text-gray-200 py-6 mt-10">
+                    <div className="max-w-7xl mx-auto px-4 flex flex-col md:flex-row items-center justify-between space-y-4 md:space-y-0">
+                        <div className="text-center md:text-left">
+                            <span className="block text-sm">All rights reserved.© 2025 Ryzera Technologies (PVT) LTD. </span>
+                            <span className="block text-xs text-gray-400">AI Smart Parking System for University of Moratuwa</span>
+                        </div>
+                        <div className="flex space-x-6 justify-center md:justify-end">
+                            <a href="https://www.linkedin.com/company/ryzera-technologies" target="_blank" rel="noopener noreferrer" className="hover:text-white focus:outline-none" aria-label="LinkedIn">
+                                <i className="fab fa-linkedin fa-lg"></i>
+                            </a>
+                            <a href="https://twitter.com/ryzera" target="_blank" rel="noopener noreferrer" className="hover:text-white focus:outline-none" aria-label="Twitter">
+                                <i className="fab fa-twitter fa-lg"></i>
+                            </a>
+                            <a href="mailto:info@ryzera.com" className="hover:text-white focus:outline-none" aria-label="Email">
+                                <i className="fas fa-envelope fa-lg"></i>
+                            </a>
+                        </div>
+                    </div>
+                </footer>
+            );
+        }
+
+        // Use React 18 createRoot API
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html> 
